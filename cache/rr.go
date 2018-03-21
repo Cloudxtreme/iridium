@@ -9,11 +9,13 @@ import (
 )
 
 const (
-	Ok = iota
+	Found = iota
 	ErrNotAuthorized
 	ErrNotFound
 	ErrMaxRecursion
 	ErrBalanceFailure
+	ErrNSNotFound
+	ErrTimeout
 )
 
 // RRtoRecord converts RR record to our own Record format
@@ -30,7 +32,7 @@ func RRtoRecord(r dnssrv.RR) Record {
 	default:
 		fields := strings.Fields(r.String())
 		if len(fields) >= 4 {
-			host, domain := splitDomain(fields[0])
+			host, domain := SplitDomain(fields[0])
 			ttl, _ := strconv.Atoi(fields[1])
 			return Record{Name: host, Domain: domain, Type: fields[3], TTL: ttl, Target: strings.Join(fields[4:], "\t")}
 		}

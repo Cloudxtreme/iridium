@@ -2,15 +2,16 @@ package iridium
 
 import (
 	"crypto/md5"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/internal/forwarder"
 	"github.com/rdoorn/iridium/internal/limiter"
+	"github.com/rdoorn/iridium/internal/master"
 )
 
 type Server struct {
@@ -23,9 +24,12 @@ type Server struct {
 	Log           chan string
 	Channels      *ChannelManager
 	Settings      *Settings
-	serverCache   *cache.Cache
+	/*masterCache   *cache.Cache
 	forwardCache  *cache.Cache
-	limiterCache  *limiter.Cache
+	limiterCache  *limiter.Cache*/
+	masterCache    Feed
+	forwarderCache Feed
+	limiterCache   Feed
 }
 
 // New creates a new DNS manager type
@@ -34,14 +38,25 @@ func New() *Server {
 		//addr: addr,
 		//allowedForwarding: []net.IPNet{},
 		//allowedRequests:   []string{"A", "AAAA", "NS", "MX", "SOA", "TXT", "CAA", "ANY", "CNAME", "MB", "MG", "MR", "WKS", "PTR", "HINFO", "MINFO", "SPF"},
-		Log:          make(chan string, 500),
-		stop:         make(chan bool),
-		serverTCP:    &dns.Server{},
-		serverUDP:    &dns.Server{},
-		serverCache:  cache.New(),
-		forwardCache: cache.New(),
-		limiterCache: limiter.New(),
-		Channels:     NewChannelManager(),
+		Log:            make(chan string, 500),
+		stop:           make(chan bool),
+		serverTCP:      &dns.Server{},
+		serverUDP:      &dns.Server{},
+		masterCache:    master.New(),
+		forwarderCache: forwarder.New(),
+		limiterCache:   limiter.New(),
+		Channels:       NewChannelManager(),
+		Settings: &Settings{
+			Addr:             "127.0.0.1:15353",
+			AXFERPassword:    "random",
+			MaxRecusion:      20,
+			MaxNameservers:   4,
+			QueryTimeout:     10 * time.Second,
+			RootHintsURL:     "https://www.internic.net/domain/named.root",
+			RootHintsRefresh: 24 * time.Hour,
+			LimiterAge:       2 * time.Second,
+			LimiterRecords:   10,
+		},
 	}
 	return m
 }
@@ -50,10 +65,12 @@ func (s *Server) LoadSettings(c *Settings) {
 	s.Settings.Lock()
 	defer s.Settings.Unlock()
 	s.Settings = c
-	s.limiterCache.Lock()
-	defer s.limiterCache.Unlock()
-	s.limiterCache.MaxAge = c.LimiterAge
-	s.limiterCache.MaxRecords = c.LimiterRecords
+	/*
+		s.limiterCache.Lock()
+		defer s.limiterCache.Unlock()
+		s.limiterCache.MaxAge = c.LimiterAge
+		s.limiterCache.MaxRecords = c.LimiterRecords
+	*/
 }
 
 // Start starts the DNS manager
@@ -82,35 +99,29 @@ func (s *Server) Stop() {
 }
 
 // AllowXfer tests if network is configured to allow AXFERS
-func (s *Server) AllowXfer(ipnet []net.IPNet) {
+func (s *Server) allowXfer(ipnet CIDRS) {
 	s.Settings.Lock()
 	defer s.Settings.Unlock()
-	s.allowedXfer = ipnet
+	s.Settings.AllowedXfer = ipnet
 }
 
 // AllowForwarding tests if network is configured to allow Forwarding requests
-func (s *Server) AllowForwarding(ipnet []net.IPNet) {
+func (s *Server) allowForwarding(ipnet CIDRS) {
 	s.Settings.Lock()
 	defer s.Settings.Unlock()
-	s.allowedForwarding = ipnet
+	s.Settings.AllowedForwarding = ipnet
 }
 
 // AllowRequests configures which dns requests to allow
-func (s *Server) AllowRequests(req []string) {
+func (s *Server) allowRequests(req []string) {
 	s.Settings.Lock()
 	defer s.Settings.Unlock()
-	s.allowedRequests = req
+	s.Settings.AllowedRequests = req
 }
 
 // Records returns json format of all dns records in dnscache
 func (s *Server) Records() []byte {
-	dnscache.Lock()
-	defer dnscache.Unlock()
-	r, err := json.Marshal(dnscache.Domain)
-	if err != nil {
-		return []byte("{}")
-	}
-	return r
+	return s.masterCache.RecordsJSON()
 }
 
 func (s *Server) log(message string, args ...interface{}) {
@@ -128,7 +139,7 @@ func md5sum(s string) string {
 }
 
 func ipAllowed(allowed CIDRS, client net.IP) bool {
-	for _, cidr := range allowed {
+	for _, cidr := range allowed.cidr {
 		if cidr.Contains(client) {
 			return true
 		}

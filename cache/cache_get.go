@@ -57,15 +57,15 @@ func (c *Cache) Get(domainName string, queryType string, hostName string, client
 						return records, ErrBalanceFailure
 					}
 				}
-				return records, Ok
+				return records, Found
 			}
 		}
 	}
 	return []Record{}, ErrNotFound
 }
 
-// GetAll returns a dns record from cache
-func (c *Cache) GetAll(domainName string, client net.IP, honorTTL bool) ([]Record, int) {
+// GetDomainRecords returns all dns records for given domain
+func (c *Cache) GetDomainRecords(domainName string, client net.IP, honorTTL bool) ([]Record, int) {
 	c.RLock()
 	defer c.RUnlock()
 	searchDomain := strings.ToLower(domainName)
@@ -101,7 +101,7 @@ func (c *Cache) GetAll(domainName string, client net.IP, honorTTL bool) ([]Recor
 }
 
 // IsServedDomain returns true or false, if we serve requests in this domain
-func (c *Cache) IsServedDomain(domain string) bool {
+func (c *Cache) DomainExists(domain string) bool {
 	c.RLock()
 	defer c.RUnlock()
 	if _, ok := c.Domain[strings.ToLower(domain)]; ok {

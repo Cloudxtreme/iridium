@@ -8,6 +8,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/rdoorn/iridium/internal/cache"
 	"github.com/rdoorn/iridium/internal/limiter"
+	"github.com/rdoorn/iridium/internal/userip"
 )
 
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -28,13 +29,16 @@ func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		bufsize = dns.MaxMsgSize - 1
 	}
 	// go through the message requests
+	//ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	//defer cancel()
+	userIP := userip.FromRequest(w.RemoteAddr().String())
+	//ctx = userip.NewContext(ctx, userIP)
 Opscode:
 	switch r.Opcode {
 	case dns.OpcodeQuery:
-		clientIP := getClientIP(w.RemoteAddr().String())
 
 		// Check if request is in cache
-		switch s.limiterCache.GetCache(clientIP, msg) {
+		switch s.limiterCache.GetRecords(userIP, msg) {
 		case limiter.MsgRateLimitReached:
 			return
 		case limiter.MsgCached:
@@ -48,15 +52,15 @@ Opscode:
 				break Opscode
 			}
 
-			if s.serverCache.IsServedDomain(q.Name) {
+			if s.masterCache.DomainExists(q.Name) {
 				// Request is a domain name based request of a domain that we server: MX/DNS/XFER
 				switch q.Qtype {
 				case dns.TypeAXFR:
-					if ipAllowed(s.Settings.AllowedXfer, clientIP) {
+					if ipAllowed(s.Settings.AllowedXfer, userIP) {
 						ch := make(chan *dns.Envelope)
 						tr := new(dns.Transfer)
 						go tr.Out(w, r, ch)
-						rs, _ := s.serverCache.GetAll(q.Name, clientIP, false)
+						rs, _ := s.masterCache.GetDomainRecords(q.Name, userIP, false)
 						records, _ := cache.DnsRecordToRR(rs)
 						records = cache.EncapsulateSOA(records)
 						ch <- &dns.Envelope{RR: records}
@@ -66,23 +70,32 @@ Opscode:
 					}
 					msg.Rcode = dns.RcodeRefused
 				default:
-					s.dnsServe(msg, "", q.Name, q.Qtype, clientIP, bufsize)
+					s.masterCache.ServeRequest(msg, "", q.Name, q.Qtype, userIP, bufsize)
 				}
 
 				// Add to message cache
-				s.limiterCache.AddCache(clientIP, msg)
-			} else if s.serverCache.IsServedDomain(getDomain(q.Name)) {
+				s.limiterCache.AddRecords(userIP, msg)
+			} else if s.masterCache.DomainExists(getDomain(q.Name)) {
 				// we serve Any other record
 				host, domain := splitDomain(q.Name)
-				s.dnsServe(msg, host, domain, q.Qtype, clientIP, bufsize)
+				s.masterCache.ServeRequest(msg, host, domain, q.Qtype, userIP, bufsize)
 				msg.Authoritative = true
 
 				// Add to message cache
-				s.limiterCache.AddCache(clientIP, msg)
+				s.limiterCache.AddRecords(userIP, msg)
 
-			} else if ipAllowed(s.Settings.AllowedForwarding, clientIP) {
+			} else if ipAllowed(s.Settings.AllowedForwarding, userIP) {
 				// we don't serve this record, but can forward
-				s.dnsForward(msg, q, clientIP)
+				// do Domain lookups if we have any of the domain type requests
+				var dnsDomain string
+				var dnsHost string
+				switch q.Qtype {
+				case dns.TypeSOA, dns.TypeNS, dns.TypeTXT, dns.TypeMX:
+					dnsDomain = q.Name
+				default:
+					dnsHost, dnsDomain = splitDomain(q.Name)
+				}
+				s.forwarderCache.ServeRequest(msg, dnsHost, dnsDomain, q.Qtype, userIP, bufsize)
 				continue
 			} else {
 				// denied
@@ -119,6 +132,7 @@ func splitDomain(fqdn string) (string, string) {
 	return host, domain
 }
 
+/*
 // TODO: proper ipv6
 func getClientIP(addr string) net.IP {
 	if idx := strings.LastIndex(addr, ":"); idx != -1 {
@@ -129,6 +143,7 @@ func getClientIP(addr string) net.IP {
 	}
 	return net.ParseIP(addr)
 }
+*/
 
 // isTCP returns true if the client is connecting over TCP.
 func isTCP(w dns.ResponseWriter) bool {

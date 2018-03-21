@@ -2,8 +2,9 @@ package iridium
 
 import (
 	"testing"
+	"time"
 
-	"github.com/rdoorn/zdns/cache"
+	"github.com/rdoorn/iridium/internal/cache"
 )
 
 var channelRecordsAdd = map[string][]cache.Record{
@@ -20,10 +21,21 @@ var channelRecordsRemove = map[string][]cache.Record{
 	},
 }
 
-var address2 = "127.0.0.1:15354"
+var channelsSettings = &Settings{
+	Addr:             "127.0.0.1:15354",
+	AXFERPassword:    "random",
+	MaxRecusion:      20,
+	MaxNameservers:   4,
+	QueryTimeout:     10 * time.Second,
+	RootHintsURL:     "https://www.internic.net/domain/named.root",
+	RootHintsRefresh: 24 * time.Hour,
+	LimiterAge:       2 * time.Second,
+	LimiterRecords:   10,
+}
 
 func TestChannels(t *testing.T) {
-	m := New(address2)
+	m := New()
+	m.LoadSettings(channelsSettings)
 
 	err := m.Start()
 	if err != nil {

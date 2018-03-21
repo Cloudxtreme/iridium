@@ -30,9 +30,9 @@ func (s *Server) StartChannels() {
 		case <-s.Channels.quit:
 			return
 		case record := <-s.Channels.Add:
-			s.serverCache.Add(record.Domain, record)
+			s.masterCache.AddRecord(record.Domain, record)
 		case record := <-s.Channels.Remove:
-			s.serverCache.Remove(record.Domain, record)
+			s.masterCache.RemoveRecord(record.Domain, record)
 			//case record := <-c.Update:
 		}
 	}

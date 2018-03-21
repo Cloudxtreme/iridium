@@ -10,7 +10,7 @@ import (
 	dnssrv "github.com/miekg/dns"
 )
 
-var settings = Settings{
+var settings = &Settings{
 	Addr:             "127.0.0.1:15353",
 	AXFERPassword:    "random",
 	MaxRecusion:      20,

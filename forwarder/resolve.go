@@ -6,12 +6,13 @@ import (
 	"time"
 
 	dnssrv "github.com/miekg/dns"
+	"github.com/rdoorn/iridium/internal/cache"
 )
 
 // Resolve resolves a request at a remote host
-func Resolve(ns []string, dnsHost string, dnsDomain string, dnsQuery uint16) ([]Record, error) {
+func (f *Forwarder) Resolve(ns []string, dnsHost string, dnsDomain string, dnsQuery uint16) ([]cache.Record, int) {
 	if len(ns) == 0 {
-		return []Record{}, fmt.Errorf("No NS found to query")
+		return []cache.Record{}, cache.ErrNSNotFound
 	}
 	var question string
 	if dnsHost == "" {
@@ -23,13 +24,13 @@ func Resolve(ns []string, dnsHost string, dnsDomain string, dnsQuery uint16) ([]
 	// limit number of dns servers we do the request to maxNameservers
 	// and randomize them
 
-	if len(ns) > maxNameservers {
+	if len(ns) > f.MaxNameservers {
 		dest := make([]string, len(ns))
 		perm := rand.Perm(len(ns))
 		for i, v := range perm {
 			dest[v] = ns[i]
 		}
-		ns = dest[:maxNameservers]
+		ns = dest[:f.MaxNameservers]
 	}
 
 	/* parallel lookups on all servers */
@@ -47,12 +48,12 @@ gotresult:
 		case zone = <-resultChan:
 			break gotresult
 		case <-timeout.C:
-			return Records{}, fmt.Errorf("lookup resulted in timeout")
+			return cache.Records{}, cache.ErrTimeout
 		}
 	}
 
-	records := forwardCache.importZone(zone.String())
-	return records, nil
+	records := f.Cache.ImportZone(zone.String())
+	return records, cache.Found
 }
 
 // ResolveSingle resolves a single request at a single DNS server, and returns its result to chan

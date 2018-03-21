@@ -102,7 +102,7 @@ func (c *Cache) createTree(domainName string, queryType string) {
 }
 
 // Add adds a record to the dns cache
-func (c *Cache) Add(domainName string, record Record) {
+func (c *Cache) AddRecord(domainName string, record Record) {
 	searchDomain := strings.ToLower(domainName)
 	record.Name = strings.ToLower(record.Name)
 	record.Domain = searchDomain
@@ -125,7 +125,7 @@ func removeRecord(s []Record, i int) []Record {
 }
 
 // Remove removed a record from the dns cache
-func (c *Cache) Remove(domainName string, record Record) {
+func (c *Cache) RemoveRecord(domainName string, record Record) {
 	searchDomain := strings.ToLower(domainName)
 	recordToLower(&record)
 	c.createTree(searchDomain, record.Type)
@@ -217,7 +217,7 @@ func recordToLower(record *Record) {
 	record.Name = strings.ToLower(record.Name)
 }
 
-func (c *Cache) importZone(zone string) []Record {
+func (c *Cache) ImportZone(zone string) []Record {
 	var records []Record
 	for t := range dnssrv.ParseZone(strings.NewReader(zone), "", "") {
 		if t.Error != nil {
@@ -228,7 +228,7 @@ func (c *Cache) importZone(zone string) []Record {
 
 		// If record exists, re-add it to update TTL
 		if c.Exists(record) {
-			c.Remove(record.Domain, record)
+			c.RemoveRecord(record.Domain, record)
 		}
 
 		// Only if we are the root domain, are we allowed to update the A records regardles of target
@@ -240,7 +240,7 @@ func (c *Cache) importZone(zone string) []Record {
 			c.RecordTypeRemove(record.Domain, record, "AAAA")
 		}
 		record.Online = true
-		c.Add(record.Domain, record)
+		c.AddRecord(record.Domain, record)
 		records = append(records, record)
 	}
 	return records
@@ -253,7 +253,7 @@ func New() *Cache {
 	return c
 }
 
-func splitDomain(fqdn string) (string, string) {
+func SplitDomain(fqdn string) (string, string) {
 	d := strings.Split(fqdn, ".")
 	host := d[0]
 	domain := strings.Join(d[1:], ".")

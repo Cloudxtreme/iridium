@@ -1,12 +1,14 @@
 package limiter
 
 import (
+	"encoding/json"
 	"net"
 	"reflect"
 	"sync"
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/rdoorn/iridium/internal/cache"
 )
 
 const (
@@ -39,8 +41,18 @@ func New() *Cache {
 	return c
 }
 
-// GetCache checks if the request limit has been reached
-func (c Cache) GetCache(client net.IP, msg *dns.Msg) int {
+func (c *Cache) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dnsQuery uint16, client net.IP, bufsize uint16) {
+
+}
+func (c *Cache) AddRecord(domainName string, record cache.Record)    {}
+func (c *Cache) RemoveRecord(domainName string, record cache.Record) {}
+func (c *Cache) GetDomainRecords(domainName string, client net.IP, honorTTL bool) ([]cache.Record, int) {
+	return []cache.Record{}, 0
+}
+func (c *Cache) DomainExists(domain string) bool { return false }
+
+// GetRecords checks if the request limit has been reached
+func (c *Cache) GetRecords(client net.IP, msg *dns.Msg) int {
 	c.Lock()
 	defer c.Unlock()
 	clientString := client.String()
@@ -63,8 +75,8 @@ func (c Cache) GetCache(client net.IP, msg *dns.Msg) int {
 	return MsgNotCached
 }
 
-// AddCache adds a message to the limiter cache
-func (c Cache) AddCache(client net.IP, msg *dns.Msg) {
+// AddRecords adds a message to the limiter cache
+func (c *Cache) AddRecords(client net.IP, msg *dns.Msg) {
 	c.Lock()
 	defer c.Unlock()
 	clientString := client.String()
@@ -78,7 +90,7 @@ func (c Cache) AddCache(client net.IP, msg *dns.Msg) {
 }
 
 // cleanMessageCacheTimer Clear up old record from limit cache every X duration
-func (c Cache) cleanMessageCacheTimer() {
+func (c *Cache) cleanMessageCacheTimer() {
 	ticker := time.NewTicker(1 * time.Second)
 	for {
 		select {
@@ -89,7 +101,7 @@ func (c Cache) cleanMessageCacheTimer() {
 }
 
 // cleanMessageCache Clear up old record from limit cache
-func (c Cache) cleanMessageCache() {
+func (c *Cache) cleanMessageCache() {
 	c.Lock()
 	defer c.Unlock()
 	tmp := make(map[string][]messageCache)
@@ -106,4 +118,14 @@ func (c Cache) cleanMessageCache() {
 			}
 		}
 	}
+}
+
+func (c *Cache) RecordsJSON() []byte {
+	c.Lock()
+	defer c.Unlock()
+	r, err := json.Marshal(c.Source)
+	if err != nil {
+		return []byte("{}")
+	}
+	return r
 }
