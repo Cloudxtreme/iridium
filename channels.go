@@ -1,7 +1,7 @@
 package iridium
 
 import (
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 // ChannelManager defines the channels used to communicate outside the package

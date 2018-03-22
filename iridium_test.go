@@ -5,26 +5,14 @@ import (
 	"crypto/rsa"
 	"net"
 	"testing"
-	"time"
 
 	dnssrv "github.com/miekg/dns"
 )
 
 var settings = &Settings{
-	Addr:             "127.0.0.1:15353",
-	AXFERPassword:    "random",
-	MaxRecusion:      20,
-	MaxNameservers:   4,
-	QueryTimeout:     10 * time.Second,
-	RootHintsURL:     "https://www.internic.net/domain/named.root",
-	RootHintsRefresh: 24 * time.Hour,
-	LimiterAge:       2 * time.Second,
-	LimiterRecords:   10,
+	Addr:          "127.0.0.1:15355",
+	AXFERPassword: "random",
 }
-
-// Security
-//DNSSecPublicKey  *dns.DNSKEY       // public key to sign dns records with
-//DNSSecPrivateKey crypto.PrivateKey // private key to sign dns records with
 
 func TestIridiumServer(t *testing.T) {
 
@@ -33,8 +21,8 @@ func TestIridiumServer(t *testing.T) {
 	if err != nil {
 		t.Errorf("failed to get key: %s", err)
 	}
-	settings.DNSSecPublicKey = key
-	settings.DNSSecPrivateKey = privKey
+	settings.Master.DNSSecPublicKey = key
+	settings.Master.DNSSecPrivateKey = privKey
 
 	// Allow localhost anything
 	_, ipnet, _ := net.ParseCIDR("127.0.0.1/32")

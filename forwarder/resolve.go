@@ -6,7 +6,7 @@ import (
 	"time"
 
 	dnssrv "github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 // Resolve resolves a request at a remote host
@@ -24,13 +24,13 @@ func (f *Forwarder) Resolve(ns []string, dnsHost string, dnsDomain string, dnsQu
 	// limit number of dns servers we do the request to maxNameservers
 	// and randomize them
 
-	if len(ns) > f.MaxNameservers {
+	if len(ns) > f.Settings.MaxNameservers {
 		dest := make([]string, len(ns))
 		perm := rand.Perm(len(ns))
 		for i, v := range perm {
 			dest[v] = ns[i]
 		}
-		ns = dest[:f.MaxNameservers]
+		ns = dest[:f.Settings.MaxNameservers]
 	}
 
 	/* parallel lookups on all servers */

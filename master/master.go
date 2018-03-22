@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 type Master struct {
@@ -29,16 +29,19 @@ type Master struct {
 	//AllowedForwarding CIDRS         // cidr allowed to forward
 
 	// Security
-	AllowedRequests  []string          // dns query types to respond to
-	AllowedXfer      []net.IPNet       // cidr allowed to do xfer
-	DNSSecPublicKey  *dns.DNSKEY       // public key to sign dns records with
-	DNSSecPrivateKey crypto.PrivateKey // private key to sign dns records with
 
 	// Rate Limiting
 	//LimiterAge     time.Duration // how long to cache limiter records
 	//LimiterRecords int           // how many requests in cache before ignoring request
+	Settings Settings
+	Cache    *cache.Cache
+}
 
-	Cache *cache.Cache
+type Settings struct {
+	AllowedRequests  []string          // dns query types to respond to
+	AllowedXfer      []net.IPNet       // cidr allowed to do xfer
+	DNSSecPublicKey  *dns.DNSKEY       // public key to sign dns records with
+	DNSSecPrivateKey crypto.PrivateKey // private key to sign dns records with
 }
 
 func New() *Master {
@@ -46,6 +49,12 @@ func New() *Master {
 		Cache: cache.New(),
 	}
 	return m
+}
+
+func (m *Master) LoadSettings(s Settings) {
+	m.Lock()
+	defer m.Unlock()
+	m.Settings = s
 }
 
 func (m *Master) AddRecord(domainName string, record cache.Record) {
@@ -56,34 +65,25 @@ func (m *Master) RemoveRecord(domainName string, record cache.Record) {
 	m.Cache.RemoveRecord(domainName, record)
 }
 
-func (m *Master) AddRecords(client net.IP, msg *dns.Msg) {
-
-}
-
 func (m *Master) GetDomainRecords(domainName string, client net.IP, honorTTL bool) ([]cache.Record, int) {
-	return []cache.Record{}, 0
+	return m.Cache.GetDomainRecords(domainName, client, honorTTL)
 }
 
 func (m *Master) DomainExists(domain string) bool {
 	return m.Cache.DomainExists(domain)
 }
 
-func (m *Master) GetRecords(client net.IP, msg *dns.Msg) int {
-	return 0
-}
-
-func (m *Master) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dnsQuery uint16, client net.IP, bufsize uint16) {
-	if m.Cache == nil {
-		m.Cache = cache.New()
-	}
-
+func (m *Master) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dnsQuery uint16, client net.IP, bufsize uint16) int {
 	// find nameserver NS (self)
 	// find nameserver A
 	// check record
 
-	// Get our original request first
+	// Get our request from cache
 	err := m.getRecursive(msg, 0, dnsDomain, dnsQuery, dnsHost, client, false)
-	if err != nil {
+	if err == nil {
+		msg.Rcode = dns.RcodeSuccess
+	} else {
+		msg.Rcode = dns.RcodeNameError
 		// TODO: error handling
 		//msg.Rcode = msg.
 	}
@@ -102,6 +102,7 @@ func (m *Master) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dn
 	o.SetDo()
 	o.SetUDPSize(bufsize)
 	msg.Extra = append(msg.Extra, o)
+	return msg.Rcode
 }
 
 // GetRecursive gets all records for a domain we serve
@@ -195,7 +196,7 @@ func encapsulateSOA(records []dns.RR) []dns.RR {
 }
 
 func (m *Master) appendRecords(msg *dns.Msg, level int, records []dns.RR) {
-	if m.DNSSecPublicKey != nil {
+	if m.Settings.DNSSecPublicKey != nil {
 		records, _ = m.dnsRecordSign(records)
 		msg.AuthenticatedData = true
 	}
@@ -245,16 +246,16 @@ func (m *Master) dnsRecordSign(records []dns.RR) (result []dns.RR, err error) {
 		sig.TypeCovered = soa.Hdr.Rrtype
 		sig.Labels = uint8(dns.CountLabel(soa.Hdr.Name)) // works for all 3
 		sig.OrigTtl = soa.Hdr.Ttl
-		sig.Expiration = expir                  // date -u '+%s' -d"2011-02-01 04:25:05"
-		sig.Inception = incep                   // date -u '+%s' -d"2011-01-02 04:25:05"
-		sig.KeyTag = m.DNSSecPublicKey.KeyTag() // Get the keyfrom the Key
-		sig.SignerName = m.DNSSecPublicKey.Hdr.Name
+		sig.Expiration = expir                           // date -u '+%s' -d"2011-02-01 04:25:05"
+		sig.Inception = incep                            // date -u '+%s' -d"2011-01-02 04:25:05"
+		sig.KeyTag = m.Settings.DNSSecPublicKey.KeyTag() // Get the keyfrom the Key
+		sig.SignerName = m.Settings.DNSSecPublicKey.Hdr.Name
 		sig.Algorithm = dns.RSASHA256
 
 		if len(records) == 0 {
 			return records, nil
 		}
-		err = sig.Sign(m.DNSSecPrivateKey.(*ecdsa.PrivateKey), []dns.RR{r})
+		err = sig.Sign(m.Settings.DNSSecPrivateKey.(*ecdsa.PrivateKey), []dns.RR{r})
 		if err != nil {
 			// TODO: error handling
 			//fmt.Printf("Signing Error:%s\n", err)

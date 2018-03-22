@@ -4,7 +4,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 func TestRootImport(t *testing.T) {

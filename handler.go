@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
-	"github.com/rdoorn/iridium/internal/limiter"
-	"github.com/rdoorn/iridium/internal/userip"
+	"github.com/rdoorn/iridium/cache"
+	"github.com/rdoorn/iridium/limiter"
+	"github.com/rdoorn/iridium/userip"
 )
 
 func (s *Server) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -37,8 +37,8 @@ Opscode:
 	switch r.Opcode {
 	case dns.OpcodeQuery:
 
-		// Check if request is in cache
-		switch s.limiterCache.GetRecords(userIP, msg) {
+		// Try to serve the request from cache, if a response for it was cached
+		switch s.limiterCache.ServeRequest(msg, userIP) {
 		case limiter.MsgRateLimitReached:
 			return
 		case limiter.MsgCached:
@@ -46,13 +46,47 @@ Opscode:
 		case limiter.MsgNotCached:
 		}
 
-		for _, q := range msg.Question {
-			if !dns.IsFqdn(q.Name) || q.Name == "." {
-				msg.SetRcode(r, dns.RcodeNotAuth)
+		/*
+			// Lets not respond to requests without a question
+			if len(msg.Question) < 1 {
+				return
+			}
+
+			// First question determains where we route stuff
+			request := msg.Question[0]
+
+			// we do not respond to root requests, or requests without a fqdn
+			if !dns.IsFqdn(request.Name) || request.Name == "." {
+				//msg.SetRcode(r, dns.RcodeNotAuth)
+				msg.Rcode = dns.RcodeNotAuth
 				break Opscode
 			}
 
-			if s.masterCache.DomainExists(q.Name) {
+			// if we serve this domain, forward this to the master cache
+			switch {
+			case s.masterCache.DomainExists(request.Name), s.masterCache.DomainExists(getDomain(request.Name)):
+				msg.Rcode := s.masterCache.ServeRequest(msg, userIP)
+				if msg.Rcode == dns.RcodeSuccess {
+					s.limiterCache.CacheRequest(msg, userIP)
+				}
+				msg.Rcode = result
+			case ipAllowed(s.Settings.AllowedForwarding, userIP):
+				msg.Rcode := s.forwarderCache.ServeRequest(msg, userIP)
+			default:
+				// denied
+				msg.Rcode = dns.RcodeRefused
+			}
+		*/
+
+		for _, q := range msg.Question {
+			if !dns.IsFqdn(q.Name) || q.Name == "." {
+				msg.Rcode = dns.RcodeNotAuth
+				continue
+			}
+
+			switch {
+
+			case s.masterCache.DomainExists(q.Name):
 				// Request is a domain name based request of a domain that we server: MX/DNS/XFER
 				switch q.Qtype {
 				case dns.TypeAXFR:
@@ -70,38 +104,37 @@ Opscode:
 					}
 					msg.Rcode = dns.RcodeRefused
 				default:
-					s.masterCache.ServeRequest(msg, "", q.Name, q.Qtype, userIP, bufsize)
+					//s.masterCache.ServeRequest(msg, "", q.Name, q.Qtype, userIP, bufsize)
+					msg.Rcode = s.masterCache.ServeRequest(msg, "", q.Name, q.Qtype, userIP, bufsize)
 				}
 
-				// Add to message cache
-				s.limiterCache.AddRecords(userIP, msg)
-			} else if s.masterCache.DomainExists(getDomain(q.Name)) {
+				// Add to message cache if OK
+				if msg.Rcode == dns.RcodeSuccess {
+					s.limiterCache.CacheRequest(msg, userIP)
+				}
+			case s.masterCache.DomainExists(getDomain(q.Name)):
 				// we serve Any other record
 				host, domain := splitDomain(q.Name)
 				s.masterCache.ServeRequest(msg, host, domain, q.Qtype, userIP, bufsize)
 				msg.Authoritative = true
 
-				// Add to message cache
-				s.limiterCache.AddRecords(userIP, msg)
+				// Add to message cache if OK
+				if msg.Rcode == dns.RcodeSuccess {
+					s.limiterCache.CacheRequest(msg, userIP)
+				}
 
-			} else if ipAllowed(s.Settings.AllowedForwarding, userIP) {
+			case ipAllowed(s.Settings.AllowedForwarding, userIP):
 				// we don't serve this record, but can forward
 				// do Domain lookups if we have any of the domain type requests
-				var dnsDomain string
-				var dnsHost string
-				switch q.Qtype {
-				case dns.TypeSOA, dns.TypeNS, dns.TypeTXT, dns.TypeMX:
-					dnsDomain = q.Name
-				default:
-					dnsHost, dnsDomain = splitDomain(q.Name)
-				}
-				s.forwarderCache.ServeRequest(msg, dnsHost, dnsDomain, q.Qtype, userIP, bufsize)
+				msg.Rcode = s.forwarderCache.ServeRequest(msg, q, userIP)
 				continue
-			} else {
+			default:
 				// denied
 				msg.Rcode = dns.RcodeRefused
 			}
+
 		}
+
 	}
 	// TSIG
 	if r.IsTsig() != nil {

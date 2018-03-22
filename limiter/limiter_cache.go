@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
 )
 
 const (
@@ -26,39 +25,42 @@ type messageCache struct {
 
 type Cache struct {
 	sync.RWMutex
+	Settings Settings
+	Source   map[string][]messageCache
+}
+
+type Settings struct {
 	MaxRecords int
 	MaxAge     time.Duration
-	Source     map[string][]messageCache
 }
 
 func New() *Cache {
 	c := &Cache{
-		Source:     make(map[string][]messageCache),
-		MaxRecords: 10,
-		MaxAge:     2 * time.Second,
+		Source: make(map[string][]messageCache),
+		Settings: Settings{ // default settings
+			MaxRecords: 10,
+			MaxAge:     2 * time.Second,
+		},
 	}
 	go c.cleanMessageCacheTimer()
 	return c
 }
 
-func (c *Cache) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dnsQuery uint16, client net.IP, bufsize uint16) {
-
+func (c *Cache) LoadSettings(s Settings) {
+	c.Lock()
+	defer c.Unlock()
+	c.Settings = s
 }
-func (c *Cache) AddRecord(domainName string, record cache.Record)    {}
-func (c *Cache) RemoveRecord(domainName string, record cache.Record) {}
-func (c *Cache) GetDomainRecords(domainName string, client net.IP, honorTTL bool) ([]cache.Record, int) {
-	return []cache.Record{}, 0
-}
-func (c *Cache) DomainExists(domain string) bool { return false }
 
-// GetRecords checks if the request limit has been reached
-func (c *Cache) GetRecords(client net.IP, msg *dns.Msg) int {
+// ServeRequest checks if the request limit has been reached
+//func (c *Cache) GetRecords(client net.IP, msg *dns.Msg) int {
+func (c *Cache) ServeRequest(msg *dns.Msg, client net.IP) int {
 	c.Lock()
 	defer c.Unlock()
 	clientString := client.String()
 	for id, cache := range c.Source[clientString] {
 		if reflect.DeepEqual(cache.Msg.Question, msg.Question) {
-			if cache.Hits > c.MaxRecords {
+			if cache.Hits > c.Settings.MaxRecords {
 				return MsgRateLimitReached
 			}
 			// we have a previously answered question
@@ -75,15 +77,15 @@ func (c *Cache) GetRecords(client net.IP, msg *dns.Msg) int {
 	return MsgNotCached
 }
 
-// AddRecords adds a message to the limiter cache
-func (c *Cache) AddRecords(client net.IP, msg *dns.Msg) {
+// CacheRequest adds a message to the limiter cache
+func (c *Cache) CacheRequest(msg *dns.Msg, client net.IP) {
 	c.Lock()
 	defer c.Unlock()
 	clientString := client.String()
 	detail := messageCache{
 		Msg:  *msg,
 		Hits: 0,
-		Date: time.Now().Add(c.MaxAge),
+		Date: time.Now().Add(c.Settings.MaxAge),
 	}
 	c.Source[clientString] = append(c.Source[clientString], detail)
 

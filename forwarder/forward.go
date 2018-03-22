@@ -9,38 +9,53 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 type Forwarder struct {
 	sync.RWMutex
 
+	Settings Settings
+	Cache    *cache.Cache
+}
+
+type Settings struct {
 	MaxRecusion      int           // how deep to recurse
 	MaxNameservers   int           // number of dns servers to query simultainious
 	QueryTimeout     time.Duration // query timeout for a dns server
 	RootHintsURL     string        // url to get the roothints file
 	RootHintsRefresh time.Duration // interval to get roothints
-	Cache            *cache.Cache
 }
 
 func New() *Forwarder {
 	f := &Forwarder{
 		Cache: cache.New(),
+		Settings: Settings{ // default settings
+			MaxRecusion:      20,
+			MaxNameservers:   4,
+			QueryTimeout:     2 * time.Second,
+			RootHintsURL:     "https://www.internic.net/domain/named.root",
+			RootHintsRefresh: 24 * time.Hour,
+		},
 	}
 	f.parseRootHints(tmproot)
 	go f.getRootHintsLoop()
 	return f
 }
+
+func (f *Forwarder) LoadSettings(s Settings) {
+	f.Lock()
+	defer f.Unlock()
+	f.Settings = s
+}
+
+/*
 func (f *Forwarder) AddRecord(domainName string, record cache.Record) {
 	f.Cache.AddRecord(domainName, record)
 }
 
 func (f *Forwarder) RemoveRecord(domainName string, record cache.Record) {
 	f.Cache.RemoveRecord(domainName, record)
-}
-
-func (f *Forwarder) AddRecords(client net.IP, msg *dns.Msg) {
-
 }
 
 func (f *Forwarder) GetDomainRecords(domainName string, client net.IP, honorTTL bool) ([]cache.Record, int) {
@@ -50,53 +65,52 @@ func (f *Forwarder) GetDomainRecords(domainName string, client net.IP, honorTTL 
 func (f *Forwarder) DomainExists(domain string) bool {
 	return f.Cache.DomainExists(domain)
 }
+*/
 
-func (f *Forwarder) GetRecords(client net.IP, msg *dns.Msg) int {
-	return 0
-}
-
-func (f *Forwarder) ServeRequest(msg *dns.Msg, dnsHost string, dnsDomain string, dnsQuery uint16, client net.IP, bufsize uint16) {
+func (f *Forwarder) ServeRequest(msg *dns.Msg, q dns.Question, client net.IP) int {
 	//func dnsForward(msg *dns.Msg, q dns.Question, client net.IP) {
 
-	/*
-		var dnsDomain string
-		var dnsHost string
-		switch q.Qtype {
-		case dns.TypeSOA, dns.TypeNS, dns.TypeTXT, dns.TypeMX:
-			dnsDomain = q.Name
-		default:
-			dnsHost, dnsDomain = splitDomain(q.Name)
-		}*/
+	var dnsDomain string
+	var dnsHost string
+	switch q.Qtype {
+	case dns.TypeSOA, dns.TypeNS, dns.TypeTXT, dns.TypeMX:
+		dnsDomain = q.Name
+	default:
+		dnsHost, dnsDomain = cache.SplitDomain(q.Name)
+	}
 
 	// Check our existing cache
-	err := f.getRecursive(msg, 0, dnsDomain, dnsQuery, dnsHost, client, true)
+	err := f.getRecursive(msg, 0, dnsDomain, q.Qtype, dnsHost, client, true)
 	if err == nil {
-		return // we have the record from cache, so exit
+		return dns.RcodeSuccess // we have the record from cache, so exit
 	}
 
 	// Get all records and add it to the cache, ignore its errors
-	f.GetRecursiveForward(0, dnsDomain, dnsQuery, dnsHost)
+	f.GetRecursiveForward(0, dnsDomain, q.Qtype, dnsHost)
+	// _, result := f.GetRecursiveForward(0, dnsDomain, q.Qtype, dnsHost)
+	//fmt.Printf("Result: %d\n", result)
 
 	// Re-get from cache, it should be there now
-	err = f.getRecursive(msg, 0, dnsDomain, dnsQuery, dnsHost, client, true)
+	err = f.getRecursive(msg, 0, dnsDomain, q.Qtype, dnsHost, client, true)
 	if err == nil {
-		return // we have the record from cache, so exit
+		return dns.RcodeSuccess // we have the record from cache, so exit
 	}
-	msg.Rcode = dns.RcodeNameError
-	return
+	// No anwer
+	return dns.RcodeNameError
 }
 
 // GetRecursiveForward gets all records for a domain we do not serve
 func (f *Forwarder) GetRecursiveForward(level int, dnsDomain string, dnsQuery uint16, dnsHost string) (rs []cache.Record, err int) {
+	//fmt.Printf("level:%d searching for %s %d %s\n", level, dnsDomain, dnsQuery, dnsHost)
 	honorTTL := true
 	client := net.IP{}
 
-	if level > f.MaxRecusion {
+	if level > f.Settings.MaxRecusion {
 		return []cache.Record{}, cache.ErrMaxRecursion
 	}
 
 	rs, result := f.Cache.Get(dnsDomain, dns.TypeToString[dnsQuery], dnsHost, client, honorTTL)
-	if result == cache.Found {
+	if result != cache.Found {
 		// find the NS servers to resolve this records
 		var domain string
 		if dnsHost == "" {

@@ -6,12 +6,11 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
 	"github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/forwarder"
-	"github.com/rdoorn/iridium/internal/limiter"
-	"github.com/rdoorn/iridium/internal/master"
+	"github.com/rdoorn/iridium/forwarder"
+	"github.com/rdoorn/iridium/limiter"
+	"github.com/rdoorn/iridium/master"
 )
 
 type Server struct {
@@ -27,9 +26,9 @@ type Server struct {
 	/*masterCache   *cache.Cache
 	forwardCache  *cache.Cache
 	limiterCache  *limiter.Cache*/
-	masterCache    Feed
-	forwarderCache Feed
-	limiterCache   Feed
+	masterCache    *master.Master
+	forwarderCache *forwarder.Forwarder
+	limiterCache   *limiter.Cache
 }
 
 // New creates a new DNS manager type
@@ -46,17 +45,7 @@ func New() *Server {
 		forwarderCache: forwarder.New(),
 		limiterCache:   limiter.New(),
 		Channels:       NewChannelManager(),
-		Settings: &Settings{
-			Addr:             "127.0.0.1:15353",
-			AXFERPassword:    "random",
-			MaxRecusion:      20,
-			MaxNameservers:   4,
-			QueryTimeout:     10 * time.Second,
-			RootHintsURL:     "https://www.internic.net/domain/named.root",
-			RootHintsRefresh: 24 * time.Hour,
-			LimiterAge:       2 * time.Second,
-			LimiterRecords:   10,
-		},
+		Settings:       &Settings{},
 	}
 	return m
 }
@@ -84,7 +73,7 @@ func (s *Server) Start() error {
 	if err := s.startListener(); err != nil {
 		return err
 	}
-	//go m.StartChannels()
+	go s.StartChannels()
 	return nil
 }
 

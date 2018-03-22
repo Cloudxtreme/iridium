@@ -9,7 +9,7 @@ import (
 	"time"
 
 	dnssrv "github.com/miekg/dns"
-	"github.com/rdoorn/iridium/internal/cache"
+	"github.com/rdoorn/iridium/cache"
 )
 
 /* for later */

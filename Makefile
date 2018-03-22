@@ -1,7 +1,7 @@
 .PHONY: all test bench
 
 test-v:
-	go test ./... -v
+	go test ./... -v  -timeout=60000ms
 
 test:
 	go test ./...
